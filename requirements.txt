@@ -1,4 +1,0 @@
-fastapi
-uvicorn
-docxtpl
-python-multipart
