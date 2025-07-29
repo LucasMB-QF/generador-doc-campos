@@ -8,9 +8,9 @@ from docx import Document
 from docx.text.paragraph import Paragraph
 import re
 from io import BytesIO
-import os
 from pathlib import Path
 import logging
+from urllib.parse import quote
 
 # Configuración básica de logging
 logging.basicConfig(level=logging.INFO)
@@ -132,11 +132,16 @@ async def procesar(
                 output_stream.seek(0)
 
                 logger.info("Procesamiento completado correctamente")
+
+                nombre_base = archivo_word.filename.rsplit(".", 1)[0]
+                nombre_generado = f"{nombre_base} (generado).docx"
+                nombre_generado_seguro = quote(nombre_generado)
+
                 return Response(
                     content=output_stream.getvalue(),
                     media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     headers={
-                        "Content-Disposition": "attachment; filename=informe_generado.docx",
+                        "Content-Disposition": f'attachment; filename="{nombre_generado_seguro}"',
                         "Access-Control-Expose-Headers": "Content-Disposition"
                     }
                 )
