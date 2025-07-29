@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Generador de Informes</title>
+</head>
+<body>
+    <h1>Generar Informe desde Excel y Word</h1>
+    <form action="/procesar" method="post" enctype="multipart/form-data">
+        <label>Archivo Excel (.xlsm):</label><br>
+        <input type="file" name="archivo_excel" required><br><br>
+        <label>Archivo Word (.docx):</label><br>
+        <input type="file" name="archivo_word" required><br><br>
+        <button type="submit">Generar Informe</button>
+    </form>
+</body>
+</html>
