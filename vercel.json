@@ -7,6 +7,10 @@
   ],
   "routes": [
     {
+      "src": "/static/(.*)",
+      "dest": "templates/$1"
+    },
+    {
       "src": "/(.*)",
       "dest": "main.py"
     }
