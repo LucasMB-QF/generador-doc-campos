@@ -9,6 +9,10 @@ import uuid
 
 app = FastAPI()
 
+@app.get("/")
+async def root():
+    return {"message": "La API está corriendo. Usa POST /procesar para generar informes."}
+
 # Regex para detectar campos tipo {{Hoja!Celda}} o {{Hoja!Rango}}
 campo_regex = re.compile(r"\{\{\s*([^\{\}]+?)\s*\}\}")
 
@@ -85,7 +89,11 @@ async def procesar(archivo_excel: UploadFile = File(...), archivo_word: UploadFi
 
         doc.save(ruta_salida)
 
-        return FileResponse(ruta_salida, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename="informe_generado.docx")
+        return FileResponse(
+            ruta_salida,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            filename="informe_generado.docx"
+        )
     except Exception as e:
         return {"error": str(e)}
     finally:
