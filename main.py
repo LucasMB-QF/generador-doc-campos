@@ -33,10 +33,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Regex: {{Hoja!Celda}} o {{campo}}
+# Regex para {{Hoja!Celda}} o {{campo}}
 campo_regex = re.compile(r"\{\{\s*([^\{\}]+?)\s*\}\}")
 
-# --- Funciones de lectura desde Excel ---
+# --- Formateo de valores ---
+
+def formatear_valor(valor):
+    if isinstance(valor, float):
+        return f"{valor:.1f}"
+    return str(valor) if valor is not None else ""
+
+# --- Lectura desde Excel ---
 
 def obtener_valor(wb, hoja_nombre, celda):
     try:
@@ -44,7 +51,7 @@ def obtener_valor(wb, hoja_nombre, celda):
         valor = hoja[celda].value
         if valor is None:
             logger.warning(f"Celda vacía: {hoja_nombre}!{celda}")
-        return str(valor) if valor is not None else ""
+        return formatear_valor(valor)
     except Exception as e:
         logger.error(f"Error en celda {hoja_nombre}!{celda}: {str(e)}")
         return ""
@@ -54,7 +61,7 @@ def obtener_valores_rango(wb, hoja_nombre, rango):
         hoja = wb[hoja_nombre]
         celdas = hoja[rango]
         fila = celdas[0]
-        return [str(c.value) if c.value is not None else "" for c in fila]
+        return [formatear_valor(c.value) for c in fila]
     except Exception as e:
         logger.error(f"Error en rango {hoja_nombre}!{rango}: {str(e)}")
         return []
@@ -76,7 +83,7 @@ def reemplazar_campos(texto, wb):
         return ""
     return campo_regex.sub(reemplazo, texto)
 
-# --- Reemplazo de párrafos (versión robusta) ---
+# --- Reemplazo en párrafos (versión robusta) ---
 
 def reemplazar_en_parrafo(parrafo: Paragraph, wb):
     texto_total = "".join(run.text for run in parrafo.runs)
