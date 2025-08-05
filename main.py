@@ -12,20 +12,17 @@ from pathlib import Path
 import logging
 from urllib.parse import quote
 
-# Configuración básica de logging
+# Configuración de logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Rutas
+# Rutas y carpetas
 current_dir = Path(__file__).resolve().parent
 templates_dir = current_dir / "templates"
 
 app = FastAPI()
 
-# Archivos estáticos
 app.mount("/static", StaticFiles(directory="templates"), name="static")
-
-# Templates Jinja2
 templates = Jinja2Templates(directory=str(templates_dir))
 
 # CORS
@@ -36,7 +33,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Regex para {{Hoja!Celda}} o {{Hoja!Rango}}
+# Regex: {{Hoja!Celda}} o {{campo}}
 campo_regex = re.compile(r"\{\{\s*([^\{\}]+?)\s*\}\}")
 
 # --- Funciones de lectura desde Excel ---
@@ -45,6 +42,8 @@ def obtener_valor(wb, hoja_nombre, celda):
     try:
         hoja = wb[hoja_nombre]
         valor = hoja[celda].value
+        if valor is None:
+            logger.warning(f"Celda vacía: {hoja_nombre}!{celda}")
         return str(valor) if valor is not None else ""
     except Exception as e:
         logger.error(f"Error en celda {hoja_nombre}!{celda}: {str(e)}")
@@ -77,13 +76,19 @@ def reemplazar_campos(texto, wb):
         return ""
     return campo_regex.sub(reemplazo, texto)
 
-# Reemplazo dentro de párrafos manteniendo estilo
-def reemplazar_en_parrafo(parrafo: Paragraph, wb):
-    for run in parrafo.runs:
-        if campo_regex.search(run.text):
-            run.text = reemplazar_campos(run.text, wb)
+# --- Reemplazo de párrafos (versión robusta) ---
 
-# --- Procesamiento del documento Word ---
+def reemplazar_en_parrafo(parrafo: Paragraph, wb):
+    texto_total = "".join(run.text for run in parrafo.runs)
+    if not campo_regex.search(texto_total):
+        return
+    texto_reemplazado = reemplazar_campos(texto_total, wb)
+    if parrafo.runs:
+        parrafo.runs[0].text = texto_reemplazado
+        for i in range(1, len(parrafo.runs)):
+            parrafo.runs[i].text = ""
+
+# --- Procesamiento de documento Word ---
 
 def procesar_documento(doc, wb):
     for p in doc.paragraphs:
@@ -109,17 +114,14 @@ async def procesar(
     try:
         logger.info("Iniciando procesamiento de archivos...")
 
-        # Validaciones
         if not archivo_excel.filename.endswith(('.xlsx', '.xlsm')):
             raise HTTPException(400, "El archivo Excel debe ser .xlsx o .xlsm")
         if not archivo_word.filename.endswith('.docx'):
             raise HTTPException(400, "El archivo Word debe ser .docx")
 
-        # Leer archivos
         excel_content = await archivo_excel.read()
         word_content = await archivo_word.read()
 
-        # Procesar documentos
         with BytesIO(excel_content) as excel_stream:
             wb = load_workbook(filename=excel_stream, data_only=True)
 
