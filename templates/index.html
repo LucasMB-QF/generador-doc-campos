@@ -1,22 +1,145 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
-    <title>Generador de Informes</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 40px; }
-        form { max-width: 500px; margin: 0 auto; }
-        input[type="file"] { margin-bottom: 20px; }
-        button { padding: 10px 15px; background: #0066cc; color: white; border: none; cursor: pointer; }
-    </style>
+  <meta charset="UTF-8" />
+  <title>Editor Manual de Campos</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 40px;
+    }
+    form {
+      max-width: 500px;
+      margin: 0 auto;
+    }
+    input[type="file"] {
+      margin-bottom: 20px;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 15px;
+      box-sizing: border-box;
+    }
+    button {
+      padding: 10px 15px;
+      background: #0066cc;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    h2 {
+      text-align: center;
+      margin-top: 30px;
+    }
+    #camposContainer {
+      max-width: 500px;
+      margin: 20px auto;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+  </style>
 </head>
 <body>
-    <h1>Generar Informe desde Excel y Word</h1>
-    <form action="/procesar" method="post" enctype="multipart/form-data">
-        <label>Archivo Excel (.xlsx/.xlsm):</label><br>
-        <input type="file" name="archivo_excel" accept=".xlsx,.xlsm" required><br><br>
-        <label>Archivo Word (.docx):</label><br>
-        <input type="file" name="archivo_word" accept=".docx" required><br><br>
-        <button type="submit">Generar Informe</button>
+  <h1 style="text-align:center;">Editor Manual de Campos en Word</h1>
+
+  <form id="uploadForm" enctype="multipart/form-data">
+    <label>Sube tu archivo Word (.docx):</label><br />
+    <input type="file" name="archivo_word" id="archivo_word" accept=".docx" required /><br />
+    <button type="submit">Detectar Campos Manuales</button>
+  </form>
+
+  <div id="camposContainer" style="display:none;">
+    <h2>Complete los campos manuales</h2>
+    <form id="camposForm">
+      <div id="camposInputs"></div>
+      <button type="submit">Generar Documento</button>
     </form>
+  </div>
+
+  <script>
+    const uploadForm = document.getElementById("uploadForm");
+    const camposContainer = document.getElementById("camposContainer");
+    const camposInputs = document.getElementById("camposInputs");
+    const camposForm = document.getElementById("camposForm");
+    let archivoWordFile = null;
+
+    uploadForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const input = document.getElementById("archivo_word");
+      if (!input.files.length) return alert("Selecciona un archivo .docx");
+      archivoWordFile = input.files[0];
+
+      const formData = new FormData();
+      formData.append("archivo_word", archivoWordFile);
+
+      try {
+        const res = await fetch("/detectar-campos", { method: "POST", body: formData });
+        if (!res.ok) {
+          const error = await res.json();
+          throw new Error(error.detail || "Error detectando campos");
+        }
+
+        const data = await res.json();
+        camposInputs.innerHTML = "";
+
+        if (!data.campos || data.campos.length === 0) {
+          alert("No se encontraron campos manuales para editar.");
+          return;
+        }
+
+        data.campos.forEach((campo) => {
+          const div = document.createElement("div");
+          div.innerHTML = `
+            <label for="${campo}">${campo}:</label>
+            <input type="text" id="${campo}" name="${campo}" required />
+          `;
+          camposInputs.appendChild(div);
+        });
+
+        camposContainer.style.display = "block";
+      } catch (error) {
+        console.error("Error:", error);
+        alert(error.message);
+      }
+    });
+
+    camposForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      const replacements = {};
+      document.querySelectorAll("#camposInputs input").forEach((input) => {
+        replacements[input.name] = input.value;
+      });
+
+      const formData = new FormData();
+      formData.append("archivo_word", archivoWordFile);
+      formData.append("replacements", JSON.stringify(replacements));
+
+      try {
+        const res = await fetch("/procesar-manual", { method: "POST", body: formData });
+        if (!res.ok) {
+          const error = await res.json();
+          throw new Error(error.detail || "Error generando documento");
+        }
+
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "documento_modificado.docx";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (error) {
+        console.error("Error:", error);
+        alert(error.message);
+      }
+    });
+  </script>
 </body>
 </html>

@@ -1,168 +1,174 @@
-from fastapi import FastAPI, UploadFile, File, Request, HTTPException
-from fastapi.responses import Response, HTMLResponse
+from fastapi import FastAPI, UploadFile, File, Form, Request, HTTPException
+from fastapi.responses import JSONResponse, Response, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from openpyxl import load_workbook
 from docx import Document
-from docx.text.paragraph import Paragraph
-import re
 from io import BytesIO
+import re
 from pathlib import Path
-import logging
-from urllib.parse import quote
-
-# Configuración de logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Rutas y carpetas
-current_dir = Path(__file__).resolve().parent
-templates_dir = current_dir / "templates"
+import json
 
 app = FastAPI()
 
-app.mount("/static", StaticFiles(directory="templates"), name="static")
-templates = Jinja2Templates(directory=str(templates_dir))
+# Config directorios
+current_dir = Path(__file__).parent.resolve()
+templates = Jinja2Templates(directory=str(current_dir / "templates"))
+app.mount("/static", StaticFiles(directory=str(current_dir / "static")), name="static")
 
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Regex para campos manuales {{campo}} (sin '!')
+campo_regex = re.compile(r"\{\{\s*([^\{\}!]+?)\s*\}\}")
 
-# Regex para {{Hoja!Celda}} o {{campo}}
-campo_regex = re.compile(r"\{\{\s*([^\{\}]+?)\s*\}\}")
+def extraer_campos_de_parrafos(parrafos):
+    campos = set()
+    for p in parrafos:
+        for match in campo_regex.finditer(p.text):
+            campos.add(match.group(1).strip())
+    return campos
 
-# --- Formateo de valores ---
+def extraer_campos_de_tablas(tablas):
+    campos = set()
+    for table in tablas:
+        for row in table.rows:
+            for cell in row.cells:
+                # Recursivo: puede haber tablas dentro de celdas pero omitimos para simplicidad
+                campos |= extraer_campos_de_parrafos(cell.paragraphs)
+    return campos
 
-def formatear_valor(valor):
-    if isinstance(valor, float):
-        return f"{valor:.1f}"
-    return str(valor) if valor is not None else ""
+def extraer_todos_los_campos(doc: Document):
+    campos = set()
 
-# --- Lectura desde Excel ---
+    # Cuerpo - párrafos y tablas
+    campos |= extraer_campos_de_parrafos(doc.paragraphs)
+    campos |= extraer_campos_de_tablas(doc.tables)
 
-def obtener_valor(wb, hoja_nombre, celda):
-    try:
-        hoja = wb[hoja_nombre]
-        valor = hoja[celda].value
-        if valor is None:
-            logger.warning(f"Celda vacía: {hoja_nombre}!{celda}")
-        return formatear_valor(valor)
-    except Exception as e:
-        logger.error(f"Error en celda {hoja_nombre}!{celda}: {str(e)}")
-        return ""
+    # Secciones - encabezados y pies de página
+    for section in doc.sections:
+        # Header y footer principal
+        campos |= extraer_campos_de_parrafos(section.header.paragraphs)
+        campos |= extraer_campos_de_tablas(section.header.tables)
+        campos |= extraer_campos_de_parrafos(section.footer.paragraphs)
+        campos |= extraer_campos_de_tablas(section.footer.tables)
 
-def obtener_valores_rango(wb, hoja_nombre, rango):
-    try:
-        hoja = wb[hoja_nombre]
-        celdas = hoja[rango]
-        fila = celdas[0]
-        return [formatear_valor(c.value) for c in fila]
-    except Exception as e:
-        logger.error(f"Error en rango {hoja_nombre}!{rango}: {str(e)}")
-        return []
+        # Diferente primera página?
+        if section.different_first_page_header_footer:
+            campos |= extraer_campos_de_parrafos(section.first_page_header.paragraphs)
+            campos |= extraer_campos_de_tablas(section.first_page_header.tables)
+            campos |= extraer_campos_de_parrafos(section.first_page_footer.paragraphs)
+            campos |= extraer_campos_de_tablas(section.first_page_footer.tables)
 
-# --- Reemplazo de campos en texto ---
+        # (Opcional) Headers/footer para páginas pares también si quieres, pero usualmente no necesario.
 
-def reemplazar_campos(texto, wb):
-    def reemplazo(match):
-        campo = match.group(1)
-        if '!' in campo:
-            hoja, celda_o_rango = campo.split('!', 1)
-            hoja = hoja.strip()
-            celda_o_rango = celda_o_rango.strip()
-            if ':' in celda_o_rango:
-                valores = obtener_valores_rango(wb, hoja, celda_o_rango)
-                return ', '.join(valores)
-            else:
-                return obtener_valor(wb, hoja, celda_o_rango)
-        return ""
-    return campo_regex.sub(reemplazo, texto)
+    return sorted(campos)
 
-# --- Reemplazo en párrafos (versión robusta) ---
+def reemplazar_texto_en_parrafo(parrafo, reemplazos):
+    # Aquí reemplazamos manteniendo formato y runs originales
+    texto_completo = "".join(run.text for run in parrafo.runs)
+    nuevo_texto = texto_completo
 
-def reemplazar_en_parrafo(parrafo: Paragraph, wb):
-    texto_total = "".join(run.text for run in parrafo.runs)
-    if not campo_regex.search(texto_total):
-        return
-    texto_reemplazado = reemplazar_campos(texto_total, wb)
-    if parrafo.runs:
-        parrafo.runs[0].text = texto_reemplazado
-        for i in range(1, len(parrafo.runs)):
-            parrafo.runs[i].text = ""
+    def reemplazo_match(match):
+        campo = match.group(1).strip()
+        return str(reemplazos.get(campo, match.group(0)))
 
-# --- Procesamiento de documento Word ---
+    nuevo_texto = campo_regex.sub(reemplazo_match, texto_completo)
 
-def procesar_documento(doc, wb):
+    if nuevo_texto != texto_completo:
+        # Reemplaza todo el texto en el primer run, limpia los otros
+        if parrafo.runs:
+            parrafo.runs[0].text = nuevo_texto
+            for run in parrafo.runs[1:]:
+                run.text = ""
+
+def reemplazar_campos(doc: Document, reemplazos: dict):
+    # Cuerpo
     for p in doc.paragraphs:
-        reemplazar_en_parrafo(p, wb)
+        reemplazar_texto_en_parrafo(p, reemplazos)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    reemplazar_texto_en_parrafo(p, reemplazos)
 
-    for tabla in doc.tables:
-        for fila in tabla.rows:
-            for celda in fila.cells:
-                for p in celda.paragraphs:
-                    reemplazar_en_parrafo(p, wb)
+    # Secciones encabezados y pies
+    for section in doc.sections:
+        for p in section.header.paragraphs:
+            reemplazar_texto_en_parrafo(p, reemplazos)
+        for table in section.header.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for p in cell.paragraphs:
+                        reemplazar_texto_en_parrafo(p, reemplazos)
 
-# --- Rutas FastAPI ---
+        for p in section.footer.paragraphs:
+            reemplazar_texto_en_parrafo(p, reemplazos)
+        for table in section.footer.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for p in cell.paragraphs:
+                        reemplazar_texto_en_parrafo(p, reemplazos)
+
+        if section.different_first_page_header_footer:
+            for p in section.first_page_header.paragraphs:
+                reemplazar_texto_en_parrafo(p, reemplazos)
+            for table in section.first_page_header.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for p in cell.paragraphs:
+                            reemplazar_texto_en_parrafo(p, reemplazos)
+
+            for p in section.first_page_footer.paragraphs:
+                reemplazar_texto_en_parrafo(p, reemplazos)
+            for table in section.first_page_footer.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for p in cell.paragraphs:
+                            reemplazar_texto_en_parrafo(p, reemplazos)
+
+@app.post("/detectar-campos")
+async def detectar_campos(archivo_word: UploadFile = File(...)):
+    try:
+        if not archivo_word.filename.endswith(".docx"):
+            raise HTTPException(400, "Solo se aceptan archivos .docx")
+
+        contenido = await archivo_word.read()
+        doc = Document(BytesIO(contenido))
+
+        campos = extraer_todos_los_campos(doc)
+
+        return JSONResponse({"campos": campos})
+
+    except Exception as e:
+        raise HTTPException(500, f"Error al detectar campos: {str(e)}")
+
+@app.post("/procesar-manual")
+async def procesar_manual(
+    archivo_word: UploadFile = File(...),
+    replacements: str = Form(...)
+):
+    try:
+        reemplazos = json.loads(replacements)
+        contenido = await archivo_word.read()
+        doc = Document(BytesIO(contenido))
+
+        reemplazar_campos(doc, reemplazos)
+
+        salida = BytesIO()
+        doc.save(salida)
+        salida.seek(0)
+
+        return Response(
+            content=salida.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": 'attachment; filename="documento_modificado.docx"'}
+        )
+
+    except Exception as e:
+        raise HTTPException(500, f"Error en procesamiento manual: {str(e)}")
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
-@app.post("/procesar")
-async def procesar(
-    archivo_excel: UploadFile = File(...),
-    archivo_word: UploadFile = File(...)
-):
-    try:
-        logger.info("Iniciando procesamiento de archivos...")
-
-        if not archivo_excel.filename.endswith(('.xlsx', '.xlsm')):
-            raise HTTPException(400, "El archivo Excel debe ser .xlsx o .xlsm")
-        if not archivo_word.filename.endswith('.docx'):
-            raise HTTPException(400, "El archivo Word debe ser .docx")
-
-        excel_content = await archivo_excel.read()
-        word_content = await archivo_word.read()
-
-        with BytesIO(excel_content) as excel_stream:
-            wb = load_workbook(filename=excel_stream, data_only=True)
-
-            with BytesIO(word_content) as word_stream:
-                doc = Document(word_stream)
-                procesar_documento(doc, wb)
-
-                output_stream = BytesIO()
-                doc.save(output_stream)
-                output_stream.seek(0)
-
-                logger.info("Procesamiento completado correctamente")
-
-                nombre_base = archivo_word.filename.rsplit(".", 1)[0]
-                nombre_generado = f"{nombre_base} (generado).docx"
-                nombre_generado_seguro = quote(nombre_generado)
-
-                return Response(
-                    content=output_stream.getvalue(),
-                    media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    headers={
-                        "Content-Disposition": f'attachment; filename="{nombre_generado_seguro}"',
-                        "Access-Control-Expose-Headers": "Content-Disposition"
-                    }
-                )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error en el procesamiento: {str(e)}", exc_info=True)
-        raise HTTPException(500, f"Error interno del servidor: {str(e)}")
-
-# --- Página de error personalizada ---
-
+# Error handler para mostrar página bonita
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
     return templates.TemplateResponse(
@@ -170,7 +176,7 @@ async def http_exception_handler(request, exc):
         {
             "request": request,
             "status_code": exc.status_code,
-            "detail": exc.detail
+            "detail": exc.detail,
         },
-        status_code=exc.status_code
+        status_code=exc.status_code,
     )
