@@ -125,6 +125,9 @@ async def procesar_manual(
     replacements: str = Form(...)
 ):
     try:
+        # Obtenemos el nombre del archivo original
+        nombre_original = archivo_word.filename
+        
         reemplazos = json.loads(replacements)
         contenido = await archivo_word.read()
         doc = Document(BytesIO(contenido))
@@ -132,10 +135,12 @@ async def procesar_manual(
         salida = BytesIO()
         doc.save(salida)
         salida.seek(0)
+        
+        # Usamos el nombre original en el header Content-Disposition
         return Response(
             content=salida.getvalue(),
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={"Content-Disposition": 'attachment; filename="documento_modificado.docx"'}
+            headers={"Content-Disposition": f'attachment; filename="{nombre_original}"'}
         )
     except Exception as e:
         raise HTTPException(500, f"Error en procesamiento manual: {str(e)}")
