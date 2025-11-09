@@ -13,7 +13,8 @@
       margin: 0 auto;
     }
     input[type="file"] {
-      margin-bottom: 20px;
+      /* Se oculta con JS, pero por si acaso */
+      display: none;
     }
     input[type="text"] {
       width: 100%;
@@ -41,16 +42,58 @@
       margin-bottom: 5px;
       font-weight: bold;
     }
+
+    /* --- NUEVOS ESTILOS PARA EL DRAG AND DROP --- */
+    #uploadContainer {
+      max-width: 500px;
+      margin: 20px auto;
+    }
+    #drop-zone {
+      border: 2px dashed #ccc;
+      border-radius: 8px;
+      padding: 40px 20px;
+      text-align: center;
+      color: #777;
+      cursor: pointer;
+      transition: border-color 0.3s, background-color 0.3s;
+    }
+    #drop-zone.drag-over {
+      /* Estilo cuando el usuario está arrastrando un archivo por encima */
+      border-color: #0066cc;
+      background-color: #f4f8ff;
+    }
+    #drop-zone.file-processing {
+      /* Estilo cuando ya se está procesando un archivo */
+      border-color: #28a745;
+      background-color: #f4fff8;
+      color: #28a745;
+    }
+    .drop-zone-icon {
+      font-size: 48px;
+      font-weight: bold;
+      color: #0066cc;
+      line-height: 1;
+    }
+    #drop-zone p {
+      margin: 10px 0 0 0;
+      font-size: 16px;
+    }
+    #archivo_word {
+      /* Oculta el input de archivo real */
+      display: none;
+    }
   </style>
 </head>
 <body>
   <h1 style="text-align:center;">Editor Manual de Campos en Word</h1>
 
-  <form id="uploadForm" enctype="multipart/form-data">
-    <label>Sube tu archivo Word (.docx):</label><br />
-    <input type="file" name="archivo_word" id="archivo_word" accept=".docx" required /><br />
-    <button type="submit">Detectar Campos Manuales</button>
-  </form>
+  <div id="uploadContainer">
+    <label for="archivo_word" id="drop-zone">
+      <span class="drop-zone-icon">+</span>
+      <p>Arrastra tu archivo .docx aquí o haz clic para seleccionarlo</p>
+    </label>
+    <input type="file" name="archivo_word" id="archivo_word" accept=".docx" required />
+  </div>
 
   <div id="camposContainer" style="display:none;">
     <h2>Complete los campos manuales</h2>
@@ -61,21 +104,65 @@
   </div>
 
   <script>
-    const uploadForm = document.getElementById("uploadForm");
+    // --- Referencias a elementos ---
+    const dropZone = document.getElementById("drop-zone");
+    const fileInput = document.getElementById("archivo_word");
     const camposContainer = document.getElementById("camposContainer");
     const camposInputs = document.getElementById("camposInputs");
     const camposForm = document.getElementById("camposForm");
     let archivoWordFile = null;
 
-    // --- NUEVO ---
-    // Clave para guardar nuestros valores en localStorage
     const LOCAL_STORAGE_KEY = "camposGuardados";
 
-    uploadForm.addEventListener("submit", async (e) => {
+    // --- NUEVA LÓGICA DE UPLOAD ---
+
+    // 1. Evento de Clic (se activa por el 'change' del input)
+    fileInput.addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        handleFile(file);
+      }
+    });
+
+    // 2. Eventos de Arrastrar (Drag and Drop)
+    dropZone.addEventListener("dragover", (e) => {
+      e.preventDefault(); // Previene que el navegador abra el archivo
+      dropZone.classList.add("drag-over");
+    });
+
+    dropZone.addEventListener("dragleave", (e) => {
       e.preventDefault();
-      const input = document.getElementById("archivo_word");
-      if (!input.files.length) return alert("Selecciona un archivo .docx");
-      archivoWordFile = input.files[0];
+      dropZone.classList.remove("drag-over");
+    });
+
+    dropZone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropZone.classList.remove("drag-over");
+
+      const file = e.dataTransfer.files[0];
+      if (file) {
+        handleFile(file);
+      }
+    });
+
+    // 3. Función central para manejar el archivo (reemplaza 'uploadForm.addEventListener')
+    async function handleFile(file) {
+      if (!file.name.endsWith(".docx")) {
+        alert("Solo se aceptan archivos .docx");
+        return;
+      }
+
+      // Asignamos el archivo a la variable global
+      archivoWordFile = file;
+
+      // Feedback visual: muestra que el archivo se está procesando
+      dropZone.querySelector('p').textContent = `Archivo: ${file.name}`;
+      dropZone.querySelector('.drop-zone-icon').textContent = '✓';
+      dropZone.classList.add("file-processing");
+      
+      // Oculta los campos anteriores si es que se sube un nuevo archivo
+      camposContainer.style.display = "none";
+      camposInputs.innerHTML = "";
 
       const formData = new FormData();
       formData.append("archivo_word", archivoWordFile);
@@ -88,24 +175,20 @@
         }
 
         const data = await res.json();
-        camposInputs.innerHTML = "";
+        // camposInputs.innerHTML = ""; // Ya lo limpiamos arriba
 
         if (!data.campos || data.campos.length === 0) {
           alert("No se encontraron campos manuales para editar.");
+          resetDropZone(); // Resetea la zona si no hay campos
           return;
         }
 
-        // --- CAMBIO AQUÍ ---
-        // 1. Traemos los valores guardados antes de crear los inputs
+        // --- Lógica de localStorage (sin cambios) ---
         const guardados = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY)) || {};
 
         data.campos.forEach((campo) => {
-          // 2. Buscamos si hay un valor guardado para este campo
           const valorGuardado = guardados[campo] || "";
-          
           const div = document.createElement("div");
-          
-          // 3. Añadimos el valor al input y apagamos el autocomplete nativo
           div.innerHTML = `
             <label for="${campo}">${campo}:</label>
             <input 
@@ -124,9 +207,22 @@
       } catch (error) {
         console.error("Error:", error);
         alert(error.message);
+        resetDropZone(); // Resetea la zona en caso de error
       }
-    });
+    }
+    
+    // 4. Función para resetear la zona de upload
+    function resetDropZone() {
+         dropZone.querySelector('p').textContent = "Arrastra tu archivo .docx aquí o haz clic para seleccionarlo";
+         dropZone.querySelector('.drop-zone-icon').textContent = '+';
+         dropZone.classList.remove("file-processing");
+         fileInput.value = ""; // Limpia el valor del input
+         archivoWordFile = null;
+    }
 
+
+    // --- LÓGICA DEL SEGUNDO FORMULARIO (SIN CAMBIOS) ---
+    // Esta parte funciona igual, ya que depende de 'archivoWordFile'
     camposForm.addEventListener("submit", async (e) => {
       e.preventDefault();
 
@@ -135,22 +231,13 @@
         replacements[input.name] = input.value;
       });
 
-      // --- CAMBIO AQUÍ ---
       try {
-        // 1. Traemos los valores *antiguos*
         const valoresAntiguos = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY)) || {};
-        
-        // 2. Creamos un objeto con los valores antiguos + los nuevos (los nuevos sobreescriben)
         const nuevosValores = { ...valoresAntiguos, ...replacements };
-        
-        // 3. Guardamos el objeto actualizado en localStorage
         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(nuevosValores));
-
       } catch (storageError) {
         console.warn("No se pudieron guardar los valores en localStorage:", storageError);
       }
-      // --- FIN DEL CAMBIO ---
-
 
       const formData = new FormData();
       formData.append("archivo_word", archivoWordFile);
@@ -172,6 +259,13 @@
         a.click();
         a.remove();
         URL.revokeObjectURL(url);
+        
+        // --- Feedback final ---
+        // Opcional: Resetea todo después de una descarga exitosa
+        // resetDropZone();
+        // camposContainer.style.display = "none";
+        // camposInputs.innerHTML = "";
+        
       } catch (error) {
         console.error("Error:", error);
         alert(error.message);
