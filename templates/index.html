@@ -130,7 +130,11 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = "documento_modificado.docx";
+        
+        // --- CAMBIO AQUÍ ---
+        // Usamos el nombre del archivo original que guardamos al subirlo
+        a.download = archivoWordFile.name; 
+        
         document.body.appendChild(a);
         a.click();
         a.remove();
