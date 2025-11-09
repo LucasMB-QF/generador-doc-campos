@@ -67,6 +67,10 @@
     const camposForm = document.getElementById("camposForm");
     let archivoWordFile = null;
 
+    // --- NUEVO ---
+    // Clave para guardar nuestros valores en localStorage
+    const LOCAL_STORAGE_KEY = "camposGuardados";
+
     uploadForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       const input = document.getElementById("archivo_word");
@@ -91,11 +95,27 @@
           return;
         }
 
+        // --- CAMBIO AQUÍ ---
+        // 1. Traemos los valores guardados antes de crear los inputs
+        const guardados = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY)) || {};
+
         data.campos.forEach((campo) => {
+          // 2. Buscamos si hay un valor guardado para este campo
+          const valorGuardado = guardados[campo] || "";
+          
           const div = document.createElement("div");
+          
+          // 3. Añadimos el valor al input y apagamos el autocomplete nativo
           div.innerHTML = `
             <label for="${campo}">${campo}:</label>
-            <input type="text" id="${campo}" name="${campo}" required />
+            <input 
+              type="text" 
+              id="${campo}" 
+              name="${campo}" 
+              value="${valorGuardado}" 
+              autocomplete="off" 
+              required 
+            />
           `;
           camposInputs.appendChild(div);
         });
@@ -115,6 +135,23 @@
         replacements[input.name] = input.value;
       });
 
+      // --- CAMBIO AQUÍ ---
+      try {
+        // 1. Traemos los valores *antiguos*
+        const valoresAntiguos = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY)) || {};
+        
+        // 2. Creamos un objeto con los valores antiguos + los nuevos (los nuevos sobreescriben)
+        const nuevosValores = { ...valoresAntiguos, ...replacements };
+        
+        // 3. Guardamos el objeto actualizado en localStorage
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(nuevosValores));
+
+      } catch (storageError) {
+        console.warn("No se pudieron guardar los valores en localStorage:", storageError);
+      }
+      // --- FIN DEL CAMBIO ---
+
+
       const formData = new FormData();
       formData.append("archivo_word", archivoWordFile);
       formData.append("replacements", JSON.stringify(replacements));
@@ -130,11 +167,7 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        
-        // --- CAMBIO AQUÍ ---
-        // Usamos el nombre del archivo original que guardamos al subirlo
         a.download = archivoWordFile.name; 
-        
         document.body.appendChild(a);
         a.click();
         a.remove();
