@@ -117,6 +117,7 @@ async def detectar_campos(archivo_word: UploadFile = File(...)):
         campos = extraer_todos_los_campos(doc)
         return JSONResponse({"campos": campos})
     except Exception as e:
+        # FastAPI devolverá esto como JSON automáticamente
         raise HTTPException(500, f"Error al detectar campos: {str(e)}")
 
 @app.post("/procesar-manual")
@@ -149,10 +150,14 @@ async def procesar_manual(
 async def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request, exc):
-    return templates.TemplateResponse(
-        "error.html",
-        {"request": request, "status_code": exc.status_code, "detail": exc.detail},
-        status_code=exc.status_code,
-    )
+# --- SECCIÓN COMENTADA PARA SOLUCIONAR EL ERROR DE JSON ---
+# Al comentar esto, FastAPI maneja las excepciones por defecto devolviendo JSON,
+# lo cual es necesario para que tu fetch() en JS funcione correctamente.
+
+# @app.exception_handler(HTTPException)
+# async def http_exception_handler(request, exc):
+#     return templates.TemplateResponse(
+#         "error.html",
+#         {"request": request, "status_code": exc.status_code, "detail": exc.detail},
+#         status_code=exc.status_code,
+#     )
